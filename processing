@@ -1,0 +1,116 @@
+import processing.serial.*;
+
+Serial myPort;
+int angle;
+float distance;
+PVector[] points = new PVector[181]; 
+int maxDistance = 40; 
+boolean objectDetected = false; // حالة وجود جسم
+
+void setup() {
+  size(800, 400); 
+  String portName = "COM9"; 
+ myPort = new Serial(this, portName, 9600);
+  myPort.bufferUntil('\n');
+}
+
+void draw() {
+  background(0);
+  drawRadar();
+  drawStatus(); // رسم حالة الجسم
+}
+
+void drawRadar() {
+  pushMatrix(); 
+translate(width / 1.9 - 100, height - 20);
+rotate(-HALF_PI);
+
+  stroke(0, 255, 0);
+  noFill();
+  for (int i = 1; i <= 4; i++) {
+    ellipse(0, 0, i * 100, i * 100);
+  }
+  
+  for (int i = -90; i <= 90; i += 30) {
+    float rad = radians(i);
+    line(0, 0, 250 * cos(rad), -250 * sin(rad));
+    float labelX = 250 * cos(rad);
+    float labelY = -250 * sin(rad);  
+    fill(255, 0, 0);
+    textSize(16);
+    textAlign(CENTER, CENTER);
+    text(i+90 + "°", labelX, labelY);
+  }
+  
+  fill(255, 0, 0);  
+  for (int i = 0; i < points.length; i++) {
+    if (points[i] != null) {
+      ellipse(points[i].x, points[i].y, 5, 5);
+    }
+  }
+
+  stroke(0, 255, 0, 150);
+  float scanX = 250 * cos(radians(angle - 90));
+  float scanY = -250 * sin(radians(angle - 90));
+  line(0, 0, scanX, scanY);
+
+  fill(0, 255, 0);
+  textSize(20);
+  text("Angle: " + angle + "°", -width/2 + 20, height/2 - 30);
+  text("Distance: " + distance + "cm", -width/2 + 20, height/2 - 10);
+
+  popMatrix(); 
+
+  fill(255, 0, 0);
+  textSize(20);
+  textAlign(RIGHT, BOTTOM);
+  text("Universite of", width - 40, 35);
+  text("Bedfordshire", width - 40, 55);
+  text("Developed By ", width - 25, height - 45);
+  text("Ziad Riad Sammour", width - 10, height - 25);
+  
+  
+}
+
+void drawStatus() {
+  fill(255, 0, 0);
+  textSize(18);
+  textAlign(LEFT, TOP);
+  
+  if (objectDetected) {
+    text("Object: Detected", 20, 20);
+    text("Angle: " + angle + "°", 20, 50);
+    text("Distance: " + distance + "cm", 20, 80);
+  } else {
+    text("Object: Not Detected", 20, 20);
+    text("Angle: -", 20, 50);
+    text("Distance: -", 20, 80);
+  }
+}
+
+void serialEvent(Serial p) {
+  String data = p.readStringUntil('\n');
+  if (data != null) {    
+    data = trim(data);
+    println("Received Data: " + data);
+    
+    String[] values = split(data, ",");
+    if (values.length == 2) {
+      angle = int(values[0]);
+      distance = float(values[1]);
+
+      if (distance > maxDistance || distance <= 0) {
+        points[angle] = null;
+        objectDetected = false; // لا يوجد جسم
+        return;
+      }
+
+      float rad = radians(angle - 90);
+      float x = distance * cos(rad) * 6.25;
+      float y = -distance * sin(rad) * 6.25;
+
+      points[angle] = new PVector(x, y);
+      objectDetected = true; // يوجد جسم
+    }
+  }
+}
