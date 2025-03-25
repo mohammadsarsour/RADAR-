@@ -1,0 +1,166 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <NewPing.h>
+#include <ESP32Servo.h>
+
+// معلومات Wi-Fi
+const char* ssid = "mohammad";
+const char* password = "mohammad123456789";
+
+// معلومات بوت تليغرام
+String botToken = "8007852908:AAHtzuSfUexHroONhjg4_Ee5IxSruGSqy-g";
+String chatId = "7272985946";
+
+// إعدادات الرادار
+#define TRIG_PIN 5  
+#define ECHO_PIN 18  
+#define MAX_DISTANCE 200  
+#define DETECTION_THRESHOLD 40  // المسافة التي يتم عندها إرسال الإشعار (سم)
+
+// إعدادات السيرفو
+#define SERVO_PIN 13
+Servo servoMotor;
+
+// مخارج LED
+#define LED_SETUP 25        // يشير إلى انتهاء الإعداد
+#define LED_ULTRASONIC 26   // يشير إلى قراءة المستشعر
+#define LED_DONE 27         // يشير إلى انتهاء القراءة
+#define LED_TELEGRAM 33     // يشير إلى إرسال الإشعار إلى الهاتف
+
+#define BUZZER_PIN 14
+
+// مستشعر المسافة
+NewPing sonar(TRIG_PIN, ECHO_PIN, MAX_DISTANCE);
+
+// متغيرات منع الإرسال المتكرر
+bool objectDetected = false;
+unsigned long lastSentTime = 0;
+const long sendInterval = 5000; // إرسال إشعار كل 5 ثوانٍ فقط
+
+void setup() {
+    Serial.begin(9600);
+    servoMotor.attach(SERVO_PIN);
+
+    // إعداد المخارج كمخارج OUTPUT
+    pinMode(LED_SETUP, OUTPUT);
+    pinMode(LED_ULTRASONIC, OUTPUT);
+    pinMode(LED_DONE, OUTPUT);
+    pinMode(LED_TELEGRAM, OUTPUT);
+    pinMode(BUZZER_PIN, OUTPUT);
+
+    // إطفاء جميع الليدات عند بدء التشغيل
+    digitalWrite(LED_SETUP, LOW);
+    digitalWrite(LED_ULTRASONIC, LOW);
+    digitalWrite(LED_DONE, LOW);
+    digitalWrite(LED_TELEGRAM, LOW);
+    digitalWrite(BUZZER_PIN, LOW);
+
+    // تشغيل LED_SETUP للإشارة إلى انتهاء الإعداد
+    digitalWrite(LED_SETUP, HIGH);
+    delay(500);
+    digitalWrite(LED_SETUP, LOW);
+
+    // تعطيل WiFi لتوفير الطاقة
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+}
+
+void soundBuzzer() {
+    digitalWrite(BUZZER_PIN, HIGH);  // تشغيل الزمور
+    delay(1000);                      // تشغيله لمدة 500 ميللي ثانية
+    digitalWrite(BUZZER_PIN, LOW); 
+}
+
+void loop() {
+    for (int angle = 0; angle <= 180; angle += 2) {
+        servoMotor.write(angle);
+        delay(50);
+        sendDistance(angle);  // استدعاء الدالة بعد تعريفها
+    }
+
+    for (int angle = 180; angle >= 0; angle -= 2) {
+        servoMotor.write(angle);
+        delay(50);
+        sendDistance(angle);  // استدعاء الدالة بعد تعريفها
+    }
+}
+
+void sendDistance(int angle) {
+    // تشغيل LED عند بدء قراءة المستشعر
+    digitalWrite(LED_ULTRASONIC, HIGH);
+
+    long distance = sonar.ping_cm();
+    if (distance == 0) distance = MAX_DISTANCE;
+
+    Serial.print(angle);
+    Serial.print(",");
+    Serial.println(distance);
+    delay(10);
+
+    checkDistance(distance, angle);
+
+    // إطفاء LED بعد انتهاء القراءة
+    digitalWrite(LED_ULTRASONIC, LOW);
+
+    // تشغيل LED_DONE بعد الإرسال
+    digitalWrite(LED_DONE, HIGH);
+    delay(50);
+    digitalWrite(LED_DONE, LOW);
+}
+
+void checkDistance(long distance, int angle) {
+    if (distance <= DETECTION_THRESHOLD && !objectDetected) {
+        unsigned long currentMillis = millis();
+        if (currentMillis - lastSentTime >= sendInterval) {
+            String message = "🚨 Object detected!\n";
+            message += "Distance:" + String(distance) + " CM\n";
+            message += "Angle: " + String(angle) + "°";
+            sendTelegramMessage(message);
+            lastSentTime = currentMillis;
+        }
+        objectDetected = true;
+        
+        soundBuzzer();
+    } else if (distance > DETECTION_THRESHOLD) {
+        objectDetected = false;
+    }
+}
+
+void sendTelegramMessage(String message) {
+    // تشغيل LED_TELEGRAM عند بدء الإرسال
+    
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid, password);
+    
+    unsigned long startAttemptTime = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 5000) {
+        delay(500);
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+        HTTPClient http;
+
+        // استبدال "\n" بـ "%0A" لإضافة سطور جديدة في تليغرام
+        message.replace("\n", "%0A");
+
+        String url = "https://api.telegram.org/bot" + botToken + "/sendMessage?chat_id=" + chatId + "&text=" + message;
+        http.begin(url);
+        int httpResponseCode = http.GET();
+        if (httpResponseCode > 0) {
+            Serial.println("📩 Message sent to Telegram!");
+            digitalWrite(LED_TELEGRAM, HIGH);
+
+        } else {
+            Serial.print("❌ Sending error: ");
+            Serial.println(httpResponseCode);
+        }
+        http.end();
+    }
+
+    // تعطيل WiFi بعد الإرسال لتوفير الطاقة
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+
+    // إطفاء LED_TELEGRAM بعد الإرسال
+    digitalWrite(LED_TELEGRAM, LOW);
+}
